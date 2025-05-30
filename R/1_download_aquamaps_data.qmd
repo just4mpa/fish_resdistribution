@@ -1,0 +1,522 @@
+---
+title: "Download aquamaps data"
+author: "Brunno F Oliveira"
+format: 
+  html:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+editor: source
+---
+
+# Load libraries
+```{r}
+rm(list=ls())
+gc()
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+# library(devtools)
+# install_github("cran/rcrypt")
+# install.packages("rgdal", repos="http://R-Forge.R-project.org")
+# install_github("raquamaps/aquamapsdata")
+# install_github("raquamaps/raquamaps")  
+# devtools::install_github("bio-oracle/biooracler")
+
+list.of.packages <- c("stringr", "crul", "tidyr", "here", "pbapply","purrr",
+                      "pbapply","dplyr","httr",
+                      "sdmpredictors", # get biooracle data
+                      "data.table", "ggplot2", "knitr", "kableExtra","ggpubr",
+                      "aquamapsdata", "raquamaps",
+                      "raster", "terra","rnaturalearthdata","tidyterra")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+```
+
+Immediately after installing the package aquamapsdata, a run-once action is needed, in order to download and locally create the SQLite database containing all the AquaMaps data.
+Approximately 5G disk space is needed locally for the database file. The download is around 1G compressed and therefore a speedy Internet connection is recommended for this initial step.
+
+
+```{r}
+# download_db(force = TRUE)
+```
+
+# Setup & Load functions
+```{r}
+# variables for modeling distribution of species absent from aquamaps
+default_db("sqlite")
+
+# modify `rasterize_presence` from `raquamaps` to use a custom raster
+.rasterize_presence <- function(occs = presence_rgbif(), raster_layer = raster(ncol = 720, nrow = 360)) {
+  raster_layer <- raster(ncol = ncol(raster_layer), nrow = nrow(raster_layer))
+  o <- na.omit(data.frame(occs$decimalLongitude, occs$decimalLatitude))
+  r <- rasterize(SpatialPoints(o), raster_layer, 
+                 fun = "count")
+  return(r)
+}
+
+# function to get probabilities from aquamaps
+calc_probs_marine <- function (hcaf_species, spreads) {
+  pred_vars <- setdiff(names(hcaf_species), "loiczid")
+  res <- as_tibble(reshape2::melt(hcaf_species, id.vars = "loiczid", variable.name = "Measure")) %>% 
+    group_by(Measure, loiczid) %>% 
+    left_join(spreads, by = "Measure") %>% 
+    dplyr::mutate(p = calc_prob(value, min, max, d1, d9)) %>% 
+    dplyr::select(Measure, loiczid, p) %>% 
+    as.data.table() %>%
+    dcast(formula = loiczid ~ Measure, value.var = "p") %>% 
+    mutate(prod_p = pmap_dbl(dplyr::select(., all_of(pred_vars)), prod), 
+           geomprod_p = prod_p^(1/length(pred_vars)))
+  return(tibble::as_tibble(res))
+}
+
+```
+
+# Load Black Sea shp file
+```{r}
+# Get world map and filter for countries bordering the Black Sea
+globe <- rnaturalearth::ne_coastline(scale = "medium", returnclass = "sv")
+black_sea <- crop(globe, ext(c(xmin = 27, xmax = 42, ymin = 40, ymax = 47)))
+```
+
+# Make AF with lower resolution
+Aquamaps provide Half-degree Cells Authority File (HCAF). This resolution is too corse.
+Here we download the same dataset available from Aquamaps, to create a new Authority File with finer resolution
+
+## Present
+Get bioclimatic layers from the package `sdmpredictors` at 10km at the equator
+```{r eval=FALSE}
+
+datasets <- list_datasets(terrestrial = FALSE, marine = TRUE)
+layers <- list_layers(datasets)
+
+# Load equal area rasters and crop with the extent of the Black Sea
+layercodes <- c(
+  # "MS_biogeo05_dist_shore_5m",
+  "MS_bathy_5m", 
+  "BO_sstrange",
+  "BO_sstmean", 
+  "BO_salinity",
+  "BO22_chlomean_ss",
+  "BO22_ph",
+  "BO22_dissoxmean_bdmean",
+  "BO22_ppmean_ss"
+)
+env <- load_layers(layercodes, 
+                   datadir = here("Data"), 
+                   rasterstack = FALSE)
+env$MS_bathy_5m <- abs(env$MS_bathy_5m)
+
+tmp <- env[[1]]
+env <- lapply(env, function(x){
+  x <- rast(x)
+  if(!ext(x)==ext(tmp)){
+    x <- extend(x, tmp)
+  }
+  x
+})
+env <- rast(env)
+env_data <- as.data.frame(env, cells = TRUE, na.rm = TRUE)
+names(env_data)[1] <- "loiczid"
+
+# crop to the black sea
+env_black_sea <- crop(env, black_sea)
+env_black_sea_data <- as.data.frame(env_black_sea, cells = TRUE, na.rm = TRUE)
+names(env_black_sea_data)[1] <- "loiczid"
+
+# plot(env$BO22_ppmean_ss)
+```
+
+## Future
+Here using the "midterm" A2 scenario. From https://archive.ipcc.ch/ipccreports/sres/emission/index.php?idp=03:
+A2. The A2 storyline and scenario family describes a very heterogeneous world. The underlying theme is self reliance and preservation of local identities. Fertility patterns across regions converge very slowly, which results in continuously increasing population. Economic development is primarily regionally oriented and per capita economic growth and technological change more fragmented and slower than other storylines.
+
+```{r eval=FALSE}
+
+datasets <- list_datasets(terrestrial = FALSE, marine = TRUE)
+layers_fut <- list_layers_future(datasets)
+
+# Load equal area rasters and crop with the extent of the Black Sea
+layercodes_fut <- layers_fut |>
+  filter(current_layer_code %in% layercodes,
+         scenario %in% c("A2","RCP45"),
+         year == "2100") |>
+  select(current_layer_code, layer_code)
+
+layercodes_fut <- merge(layercodes_fut,
+                        data.frame(current_layer_code = layercodes),
+                        all = TRUE)
+pos <- which(is.na(layercodes_fut$layer_code))
+layercodes_fut$layer_code[pos] <- layercodes_fut$current_layer_code[pos]
+layercodes_fut <- layercodes_fut[match(layercodes,layercodes_fut$current_layer_code),]
+
+env_future <- load_layers(layercodes = layercodes_fut$layer_code, 
+                          datadir = here("Data"), 
+                          rasterstack = FALSE)
+env_future$MS_bathy_5m <- abs(env_future$MS_bathy_5m)
+
+tmp <- env_future[[1]]
+env_future <- lapply(env_future, function(x){
+  x <- rast(x)
+  if(!ext(x)==ext(tmp)){
+    x <- extend(x, tmp)
+  }
+  x
+})
+env_future <- rast(env_future)
+env_future_data <- as.data.frame(env_future, cells = TRUE, na.rm = TRUE)
+names(env_future_data) <-  names(env_data)
+
+# crop to the black sea
+env_future_black_sea <- crop(env_future, black_sea)
+env_future_black_sea_data <- as.data.frame(env_future_black_sea, cells = TRUE, na.rm = TRUE)
+names(env_future_black_sea_data) <- names(env_black_sea_data)
+```
+
+# Load Romanian MPAs
+```{r}
+# # Unzip the shapefile
+# unzip(here("Data/WDPA_Dec2024_MPAs_RO.zip"), exdir = here("Data"))
+
+# Read the shapefile
+RO_MPAs <- vect(here("Data/WDPA_Dec2024_MPAs_RO.shp"))
+# crop to the black sea to get only the marine areas
+RO_MPAs <- crop(RO_MPAs, black_sea)
+
+par(mfrow=c(1,2))
+{
+  plot(black_sea)
+  plot(RO_MPAs,add=TRUE, col = "gray")
+  
+  plot(RO_MPAs, col = "gray")
+  plot(black_sea,add=TRUE)
+}
+```
+
+# Load sp list
+```{r}
+sp_list <- read.csv(here("Data/sps_list_w_accepted_names.csv"))
+length(unique(sp_list$AcceptedName))
+```
+
+# Load sp occurences fron GBIF
+```{r}
+sps_occ <- read.csv(here("Data/sps_gbif_clean_data.csv"))
+length(unique(sps_occ$species))
+```
+
+# Make species maps
+```{r eval=FALSE}
+# store sp distribution for future use
+sp_maps <- list()
+
+for(i in 1:nrow(sp_list)){ 
+  
+  cat("\rGoing species", i, "from", nrow(sp_list), " - ", sp_list$AcceptedName[i])
+  
+  sp.tmp <- sp_list$AcceptedName[i]
+  sp.tmp <- strsplit(sp.tmp, " ")[[1]]
+  sp.tmp <- am_search_exact(Genus = sp.tmp[1], Species = sp.tmp[2]) # get accepted species name from aquamaps
+  
+  # get occ from gbif
+  tmp. <- sps_occ |>
+    filter(species == sp_list$AcceptedName[i])
+  tmp_vect <- vect(tmp., geom=c("decimalLongitude","decimalLatitude"))
+  # rasterize
+  r <- .rasterize_presence(tmp., env)
+  # get cells ids in aquamaps
+  loiczids <- which_cells_in_raster(r)
+  # create species af
+  af_sps <-
+    env_data %>%
+    dplyr::filter(loiczid %in% loiczids) |>
+    na.omit()
+  
+  # calculate spreads
+  spread_sps <- calc_spreads(af_sps)
+  # calculate probs presence
+  probs_pres <- calc_probs_marine(hcaf_species = env_black_sea_data, 
+                                  spreads = spread_sps)
+  while(any(colSums(probs_pres[,-1])==0)){
+    keep <- c("loiczid",names(which(!colSums(probs_pres[,-1])==0)))
+    probs_pres <- calc_probs_marine(hcaf_species = env_black_sea_data[,keep], 
+                                    spreads = spread_sps)
+  }
+  # calculate probs future
+  probs_fut <- calc_probs_marine(hcaf_species = env_future_black_sea_data, 
+                                 spreads = spread_sps)
+  while(any(colSums(probs_fut[,-1])==0)){
+    keep <- c("loiczid",names(which(!colSums(probs_fut[,-1])==0)))
+    probs_fut <- calc_probs_marine(hcaf_species = data.frame(env_future_black_sea_data[,keep]), 
+                                   spreads = spread_sps)
+  }
+  
+  # Put the probabilities into a raster layer
+  r <- env_black_sea[[1]]
+  values(r) <- NA
+  r_pres <- r_fut <- r
+  
+  r_pres[probs_pres$loiczid] <- probs_pres$prod_p
+  
+  r_fut[probs_fut$loiczid] <- probs_fut$prod_p
+  
+  tmp <- c(r_pres,r_fut)
+  names(tmp) <- c("Present", "Future")
+  
+  sp_maps[[i]] <- tmp
+  
+  sp_list$Source[i] <- "DIY"
+}
+
+```
+
+
+## Save maps
+```{r }
+save_dir <- here("Data/sp_maps")
+if(!dir.exists(save_dir)){
+  dir.create(save_dir)
+}
+```
+
+
+```{r eval=FALSE}
+for(i in 1:length(sp_maps)){
+  writeRaster(sp_maps[[i]], 
+              filename = here(save_dir,
+                              paste0(stringr::str_squish(sp_list$taxonname[i]),".tif")),
+              overwrite=TRUE)
+}
+
+```
+
+```{r}
+
+sp_maps <- lapply(sp_list$taxonname, function(x){
+  rast(here(save_dir,
+            paste0(stringr::str_squish(x),".tif")))
+})
+
+```
+
+## Map species
+```{r fig.height=10,fig.width=8}
+
+pp <- list()
+
+for(i in 1:length(sp_maps)){
+  
+  {  
+    
+    tmp <- sp_maps[[i]]
+    
+    tmp_vect <- sps_occ |>
+      filter(species == sp_list$AcceptedName[i])
+    tmp_vect <- vect(tmp_vect, geom=c("decimalLongitude","decimalLatitude"))
+    crs(tmp_vect) <- crs(tmp)
+    
+    pp[[i]] <- ggplot()+
+      geom_spatraster(data = tmp) +
+      geom_spatvector(data = black_sea) +
+      geom_spatvector(data = RO_MPAs, col = "red", fill = NA) +
+      geom_spatvector(data = tmp_vect) +
+      facet_wrap(~lyr, ncol = 2)+
+      scale_fill_whitebox_c(
+        palette = "muted",
+        breaks = seq(0,1,.1),
+        limits = c(0,1),
+        guide = guide_legend(reverse = TRUE)
+      ) +
+      labs(
+        fill = "",
+        title = sp_list$AcceptedName[i]
+      ) +
+      theme_minimal()+
+      xlim(ext(black_sea)[1:2]) + ylim(ext(black_sea)[3:4])+
+      theme(plot.title = element_text(face = "italic",hjust = 0.5))
+    
+  }
+}
+
+```
+
+
+```{r fig.height=45,fig.width=8}
+
+ggarrange(plotlist = pp, 
+          ncol = 1, nrow = length(pp),
+          common.legend = TRUE, legend = "right")
+
+```
+
+# Get MPA x species data
+```{r }
+variables <- c("maxlength_cm", "trophic_level", "fishing_vul", "climate_vul", "protein", "omega3")
+```
+
+## Make species presence absence from Romanian MPAs
+```{r eval=FALSE}
+
+# Make presence absence from continuous rasters
+# set threshold for presence of .7
+thrs <- 0.3
+
+presabs <- lapply(sp_maps, function(x){
+  x>thrs
+})
+
+names(presabs) <- sp_list$AcceptedName
+
+```
+
+
+
+```{r eval=FALSE}
+sps_pres <- rast(lapply(presabs, function(x) x[[1]]$Present))
+sps_fut <- rast(lapply(presabs, function(x) x[[2]]$Future))
+
+RO_MPAs_data <- data.frame()
+
+for(i in 1:length(RO_MPAs$NAME)){
+  
+  MPA_i <- RO_MPAs$NAME[i]
+  
+  # species at present
+  sps_pres_MPA_i <- crop(sps_pres, RO_MPAs |> filter(NAME == MPA_i)) + 0
+  sps_present <- rownames(terra::global(sps_pres_MPA_i, max) |> filter(max == 1))
+  sp_list_MPA <- sp_list |> filter(AcceptedName %in% sps_present)
+  
+  # rich present
+  richness <- length(sps_present)
+  
+  # get variables for the present
+  vars_pres <- sapply(variables, function(x){
+    mean(sp_list_MPA[,x], na.rm = TRUE)
+  })
+  vars_pres <- data.frame(richness, t(vars_pres))
+  names(vars_pres) <- paste0(names(vars_pres),"_pres")
+  
+  # species at future
+  sps_fut_MPA_i <- crop(sps_fut, RO_MPAs |> filter(NAME == MPA_i)) + 0
+  sps_future <- rownames(terra::global(sps_fut_MPA_i, max) |> filter(max == 1))
+  sp_list_MPA <- sp_list |> filter(AcceptedName %in% sps_future)
+  
+  # rich future
+  richness <- length(sps_future)
+  
+  # get variables for the future
+  vars_fut <- sapply(variables, function(x){
+    mean(sp_list_MPA[,x], na.rm = TRUE)
+  })
+  vars_fut <- data.frame(richness, t(vars_fut))
+  names(vars_fut) <- paste0(names(vars_fut),"_fut")
+  
+  
+  ###########
+  # compile
+  tmp <- data.frame(NAME = MPA_i, vars_pres, vars_fut)
+  
+  RO_MPAs_data <- rbind(RO_MPAs_data,
+                        tmp)
+  
+}
+```
+
+## Calculate change
+```{r }
+variables_change <- c("richness", variables)
+variables_change_names <- paste0(variables_change,"_change")
+```
+
+
+```{r eval=FALSE}
+# change
+change_i <- lapply(variables_change, function(x){
+  RO_MPAs_data[paste0(x,"_fut")] - RO_MPAs_data[paste0(x,"_pres")]
+})
+change_i <- do.call("cbind",change_i)
+names(change_i) <- variables_change_names
+
+RO_MPAs_data <- cbind(RO_MPAs_data,change_i)
+
+# change %
+change_i <- lapply(variables_change, function(x){
+  ((RO_MPAs_data[paste0(x,"_fut")] - RO_MPAs_data[paste0(x,"_pres")]) / RO_MPAs_data[paste0(x,"_pres")]) * 100
+})
+change_i <- do.call("cbind",change_i)
+names(change_i) <- paste0(variables_change_names,"_perc")
+
+RO_MPAs_data <- cbind(RO_MPAs_data,change_i)
+
+# feed
+RO_MPAs <- RO_MPAs |> left_join(RO_MPAs_data, by = "NAME")
+
+```
+
+```{r eval=FALSE}
+
+write.csv(RO_MPAs_data, 
+          here("Outputs/RO_MPAs_data_change.csv"), 
+          row.names = TRUE)
+
+```
+
+```{r}
+
+RO_MPAs_data <- read.csv(here("Outputs/RO_MPAs_data_change.csv"))
+
+# Read the shapefile
+RO_MPAs <- vect(here("Data/WDPA_Dec2024_MPAs_RO.shp"))
+# crop to the black sea to get only the marine areas
+RO_MPAs <- crop(RO_MPAs, black_sea)
+RO_MPAs <- RO_MPAs |> left_join(RO_MPAs_data, by = "NAME")
+
+```
+
+## Map change
+```{r}
+gg <- list()
+for(i in 1:length(variables_change_names)){
+  
+  limits <- max(abs(range(RO_MPAs_data[,variables_change_names[i]])))
+  plot_title <- gsub("_"," ",str_to_title(variables_change_names[i]))
+  plot_title <- gsub("change","",plot_title)
+  
+  gg[[i]] <- ggplot() +
+    ggtitle(plot_title)+
+    geom_spatvector(data = RO_MPAs, aes_string(fill = variables_change_names[i])) +
+    geom_spatvector(data = vect(countries50), fill = "gray", alpha = .5) +
+    xlim(ext(RO_MPAs)[1:2]) + ylim(ext(RO_MPAs)[3:4])+
+    scale_fill_gradient2(
+      low = "#C54A52",     # for values < 0
+      mid = "white",    # for 0
+      high = "#4888B8",     # for values > 0  
+      midpoint = 0,
+      limits = c(-limits, limits),
+      transform = ifelse(grepl("vul",variables_change_names[i]),"reverse","identity")
+    ) +
+    labs(fill = "Change")+
+    theme_minimal()
+  
+}
+```
+
+
+```{r fig.height=15,fig.width=8}
+
+p_combined <- ggarrange(plotlist = gg, 
+                        ncol = 2, nrow = round(length(gg)/2,0))
+
+annotate_figure(
+  p_combined,
+  bottom = text_grob("Change = Future - Present", hjust = 1, size = 10)
+)
+```
+
