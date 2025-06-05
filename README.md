@@ -1,0 +1,1 @@
+This repository contains code to generate species distribution models (SDMs) for target fish species in the Black Sea, and projections to future conditions acording to climate models. The aim of this project is to assess changes in fish composition within marine protected areas (MPAs) at the Black Sea. 
