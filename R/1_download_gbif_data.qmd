@@ -12,11 +12,11 @@ editor: source
 
 # Load libraries
 ```{r message=FALSE, warning=FALSE}
-rm(list=ls()) 
+rm(list=ls())
 gc()
 ```
 
-
+oi
 ```{r message=FALSE, warning=FALSE}
 # devtools::install_github("ropensci/CoordinateCleaner")
 
