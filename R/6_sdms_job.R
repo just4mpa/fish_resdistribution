@@ -2,29 +2,39 @@ rm(list=ls())
 gc()
 
 library(here)
-library(dplyr)
 
-computer = "matrics"
-if(computer == "matrics"){
-  wd <- "/users/boliveira/fish_redistribution"
-} 
-if(computer == "buca"){
+computer = Sys.info()["nodename"]
+if(computer == "BRUNNO-THINKPAD" | computer == "just"){
   wd <- here()
+} else {
+  wd <- "/users/boliveira/fish_redistribution"
 }
 
 source(here(wd,"R/source_code.R"))
+
+library(dplyr)
 
 singularity_image <- "/users/boliveira/geospatial_4.5.1.sif"
 Rscript_file <- here(dir_code,"6_sdms_single_species.R")
 
 sp_list <- list.files(dir_sp_occ, pattern = ".csv")
 sp_list <- gsub(".csv","",sp_list)
+length(sp_list)
 
 job_dir <- here(dir_code,"jobs")
 dir.create(job_dir, showWarnings = FALSE)
 
 log_dir <- here(dir_code,"logs")
 dir.create(log_dir, showWarnings = FALSE)
+
+# See if there are missing species
+verbose_sdms <- lapply(sp_list, function(x){
+  try({
+    read.csv(here(dir_sdms,x,paste0(x,"_SDM_verbose.csv")))
+  }, silent = TRUE)
+})
+table(sapply(verbose_sdms,class))
+sp_list <- sp_list[which(sapply(verbose_sdms,class)=="try-error")]
 
 for(i in 1:length(sp_list)){
   
@@ -44,8 +54,8 @@ for(i in 1:length(sp_list)){
     N_jobs_at_a_time = 100
     N_Nodes = 1
     tasks_per_core = 1
-    cores = 3 
-    memory = "16G"
+    cores = 3 # 3 k-fold and 1 model (Maxnet)
+    memory = "30G"
     time = "1:00:00"
     partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
                                  request_cpu = cores, 
@@ -53,7 +63,7 @@ for(i in 1:length(sp_list)){
     
     slurm_job_singularity(jobdir = job_dir,
                           logdir = log_dir, 
-                          sptogo = sptogo, 
+                          jobname = sptogo, 
                           args = args,
                           N_Nodes = N_Nodes, 
                           tasks_per_core = tasks_per_core, 

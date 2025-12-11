@@ -5,35 +5,32 @@ gc()
 
 library(here)
 
-computer = "matrics"
-if(computer == "matrics"){
-  wd <- "/users/boliveira/fish_redistribution"
-} 
-if(computer == "buca"){
+computer = Sys.info()["nodename"]
+if(computer == "BRUNNO-THINKPAD" | computer == "just"){
   wd <- here()
+} else {
+  wd <- "/users/boliveira/fish_redistribution"
 }
 
 source(here(wd,"R/source_code.R"))
 
 # install.packages("biomod2", dependencies = TRUE)
 
-list.of.packages <- c("terra","rnaturalearthdata","biomod2","gbm","maxnet",
+list.of.packages <- c("terra","rnaturalearthdata","rnaturalearth",
+                      "biomod2","gbm","maxnet","gam",
                       "tidyverse","tictoc","tidyterra","dismo",
                       "ggplot2","data.table",
                       "parallelly","dplyr","foreach","doParallel")
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
+load_packages(list.of.packages)
 
 # Get world shapefile
 globe <- rnaturalearth::ne_coastline(scale = "medium", returnclass = "sv")
 
 # Species list
 args <- commandArgs(trailingOnly = TRUE)
-sp_i_ID <- args[1]  # species name passed by SLURM
+sp_i_ID <- as.character(args[1])  # species name passed by SLURM
+# sp_i_ID <- as.character(2340972)
 
 # Register parallel backend
 N_cpus <- parallelly::availableCores()
@@ -54,8 +51,6 @@ out_verbose  <- try({
   }
   
   if(run){
-    
-    # sp_i_ID = as.character(10675465)
     
     output_dir <- here(dir_sdms,sp_i_ID)
     dir.create(output_dir, showWarnings = FALSE)
@@ -87,10 +82,11 @@ out_verbose  <- try({
     
     # Simplify environmental layers ----
     
-    env_PCA <- prcomp(pres_layers, retx = TRUE, scale. = TRUE, center = TRUE)
+    env_data <- as.data.frame(pres_layers) %>% na.omit()
+    env_PCA <- prcomp(env_data, retx = TRUE, scale. = TRUE, center = TRUE)
     cumvar <- cumsum(env_PCA$sdev^2) / sum(env_PCA$sdev^2)
     num_pc <- which(cumvar >= 0.9)[1]
-    env_PCA <- prcomp(pres_layers, retx = TRUE, scale. = TRUE, center = TRUE, rank. = num_pc)
+    env_PCA <- prcomp(env_data, retx = TRUE, scale. = TRUE, center = TRUE, rank. = num_pc)
     
     # Create new raster for the present layers
     pres_layers_pca <- predict(pres_layers, env_PCA)
@@ -177,10 +173,12 @@ out_verbose  <- try({
         metric.select = "TSS",
         metric.eval = "TSS")
       
-      # Evaluate ensemble model ----
-      myevals_ens = get_evaluations(model_sp)
+      # Evaluate models ----
+      write.csv(get_evaluations(ens_model_sp), 
+                here::here(output_dir,paste0(sp_i_ID,"_ens_mod_eval.csv")),
+                row.names = FALSE)
       
-      write.csv(myevals_ens, 
+      write.csv(get_evaluations(model_sp), 
                 here::here(output_dir,paste0(sp_i_ID,"_mod_eval.csv")),
                 row.names = FALSE)
       
@@ -191,9 +189,8 @@ out_verbose  <- try({
     # Project to the present ----
     file.out <- here(dir_sdms,
                      sp_i_ID,
-                     paste0("proj_",sp_i_ID, "_pres_proj"),
-                     
-                     paste0(sp_i_ID,".",sp_i_ID, "_pres_proj.ensemble.projection.out"))
+                     paste0("proj_",sp_i_ID, "_fut_proj"),
+                     paste0(sp_i_ID,".",sp_i_ID, "_fut_proj.ensemble.projection.out"))
     if(!file.exists(file.out)) {
       
       projname <- paste0(sp_i_ID,"_pres_proj")

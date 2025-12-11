@@ -1,17 +1,17 @@
 # Fish redistribution from climate change risks human nutritional security 🌍🐟
 
-The aim of this project is to estimate changes nutrition security, as fishes redistribute from climate change. This repository contains code to generate species distribution models (SDMs) for target fish species, and projections to future conditions according to climate models. We based nutritional values of fish species from the database of [Hicks et al. 2019](Hicks et al. 2019).
+The aim of this project is to estimate changes nutrition security, as fishes redistribute from climate change. This repository contains code to generate species distribution models (SDMs) for target fish species, and projections of species redistribution to future conditions according to climate models. We based nutritional values of fish species from the database of [Hicks et al. 2019](https://www.nature.com/articles/s41586-019-1592-6).
 
-Hicks et al. (2019) provide nutrient data for 5907 fish species. We removed those identified to the genus level, resulting in 5853 species. The nutrients the group compiled were:
+Hicks et al. (2019) provide nutrient data for 5907 fish species. We removed those identified to the genus level, resulting in 5853 species. The nutrients (in g of nutrient per 100 g of raw, edible portion) the group compiled were:
 
--   *Selenium*, *Zinc*, *Protein*, *Omega 3*, *Calcium*, *Iron* and *Vitamin_A*
+-   *Selenium*, *Zinc*, *Protein*, *Omega 3*, *Calcium*, *Iron* and *Vitamin A*
 
-We download occurrence records from GBIF for all the 5885 species, and run enssemble SDMs for XX species with more than 30 occurrence records.
+We download occurrence records from GBIF for all the 5885 species, and run ensemble SDMs for XX species with more than 30 occurrence records.
 
 **Nutritional Security Index (NSI)** should capture two main thi:
 
 1.  **Nutrient quality per species** (e.g., protein, iron, zinc, omega-3, etc.).
-2.  **Projected availability in MPAs** (from your SDMs, i.e., habitat suitability or biomass proxy).
+2.  **Projected availability in MPAs** (from SDMs).
 
 So the index becomes a **weighted sum of nutritional contributions** of species present in an MPA under a given scenario.
 
@@ -28,7 +28,7 @@ $$
 where:
 
 -   $S$ = number of species considered
--   $A_{i,j,t}$ = availability of species $i$ in MPA $j$ at time $t$ (e.g., binary presence/absence, probability of occurrence, or biomass proxy)
+-   $A_{i,j,t}$ = availability of species $i$ in MPA $j$ at time $t$ (e.g., binary presence/absence output from SDMs)
 -   $NQ_i$ = nutrient quality score of species $i$ (can be a composite of multiple nutrients)
 
 ------------------------------------------------------------------------
@@ -45,7 +45,7 @@ Several options, depending on your data:
     NQ_i = \sum_{k=1}^{K} w_k \cdot \frac{N_{i,k}}{RDA_k}
     $$
 
-    where $k$ = nutrient, $w_k$ = weight (e.g., equal or based on dietary importance).
+    where $i$ = species index, $k$ = nutrient, $N_i,_k$ = amount of nutrient $k$ in species $i$, $w_k$ = weight of nutrient $k$ (e.g., equal weights, or higher weight for limiting micronutrients)
 
 ------------------------------------------------------------------------
 

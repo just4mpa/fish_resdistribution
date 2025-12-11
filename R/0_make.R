@@ -12,12 +12,13 @@ rm(list=ls())
 gc()
 
 library(here)
+library(pbapply)
 
-computer = "buca"
-if(computer == "matrics"){
+computer = Sys.info()["nodename"]
+if(computer == "login02" | computer == "login01"){
   wd <- "/users/boliveira/fish_redistribution"
 } 
-if(computer == "buca"){
+if(computer == "just"){
   wd <- here()
 }
 
@@ -41,25 +42,26 @@ source(here(wd,"R/5_get_sps_within_MPAs.R"))
 
 # 6) Fit SDMs for species that occur within MPAs ----
 # Run this is in a normal computer:
-source(here(wd,"R/6_sdms.R"))
-# Or run this is a HPC:
+# source(here(wd,"R/6_sdms.R"))
+# Or run this is a HPC (P.S.: The underlying code must be adjust to reflect HPC architecture):
 source(here(wd,"R/6_sdms_job.R"))
 
-# Read verbose file to check for errors
-all_sdms <- list.files(dir_sdms)
-verbose_sdms <- lapply(all_sdms, function(x){
-  read.csv(here(dir_sdms,x,paste0(x,"_SDM_verbose.csv")))
-})
-verbose_sdms <- do.call(rbind,verbose_sdms)
-table(verbose_sdms$PCA_env)
-table(verbose_sdms$SDM_fit)
-table(verbose_sdms$SDM_proj_pres)
-table(verbose_sdms$SDM_proj_fut)
-
 # 7) Get species pres/abs within MPAs ----
-source(here(wd,"R/7_get_species_within_MPAs.R"))
+# It's memory intense. Run this is a HPC (P.S.: The underlying code must be adjust to reflect HPC architecture):
+slurm_job_singularity(jobdir = here(dir_code,"jobs"),
+                      logdir = here(dir_code,"logs"), 
+                      jobname = "presabs", 
+                      args = "",
+                      N_Nodes = 1, 
+                      tasks_per_core = 1, 
+                      cores = 10, 
+                      time = "3:00:00", 
+                      memory = "100G", 
+                      partition = "bigmem", 
+                      singularity_image = "/users/boliveira/geospatial_4.5.1.sif", 
+                      Rscript_file = here(wd,"R/7_get_species_presabs_within_MPAs.R"))
 
-# 8) Measure species gain/loss inside protected  areas
+# 8) Quantify species gain/loss inside protected areas
 
 
 # 9)  

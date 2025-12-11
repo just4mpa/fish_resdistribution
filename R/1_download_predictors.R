@@ -8,12 +8,11 @@ gc()
 
 library(here)
 
-computer = "matrics"
-if(computer == "matrics"){
-  wd <- "/users/boliveira/fish_redistribution"
-} 
-if(computer == "buca"){
+computer = Sys.info()["nodename"]
+if(computer == "BRUNNO-THINKPAD" | computer == "just"){
   wd <- here()
+} else {
+  wd <- "/users/boliveira/fish_redistribution"
 }
 
 source(here(wd,"R/source_code.R"))
@@ -21,15 +20,10 @@ source(here(wd,"R/source_code.R"))
 list.of.packages <- c("stringr", "crul", "tidyr", "here", "pbapply","purrr",
                       "pbapply","dplyr","httr",
                       "sdmpredictors", # get biooracle data
-                      "data.table", "ggplot2",
+                      "data.table", "ggplot2","rnaturalearth",
                       "raster", "terra","rnaturalearthdata","tidyterra")
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(
-  new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
+load_packages(list.of.packages)
 
 # Load global sea shp file -----
 
@@ -61,7 +55,7 @@ layercodes_fut <- layers_fut |>
   filter(current_layer_code %in% layercodes,
          scenario %in% c("A2","RCP45"),
          year == "2100") |>
-  select(current_layer_code, layer_code)
+  dplyr::select(current_layer_code, layer_code)
 
 layercodes_fut <- merge(layercodes_fut,
                         data.frame(current_layer_code = layercodes),
@@ -69,7 +63,7 @@ layercodes_fut <- merge(layercodes_fut,
 pos <- which(is.na(layercodes_fut$layer_code))
 layercodes_fut$layer_code[pos] <- layercodes_fut$current_layer_code[pos]
 layercodes_fut <- layercodes_fut[match(layercodes,layercodes_fut$current_layer_code),]
-
+dim(layercodes_fut)
 
 # Download predictor variables ----
 # Get bioclimatic layers from the package `sdmpredictors` at 10km at the equator
@@ -101,12 +95,15 @@ for(i in 1:nlyr(env_pres)){
   rast_i_name <- names(rast_i)
   rast_i_name_file <- paste0(rast_i_name,".tif")
   
-  writeRaster(rast_i, here(dir_layers_pres,rast_i_name_file))
+  writeRaster(rast_i, here(dir_layers_pres,rast_i_name_file), overwrite = TRUE)
 }
 
 # remove zip files
 rem <- list.files(dir_layers_pres, pattern = ".zip", full.names = TRUE)
 unlink(rem)
+
+# remove extra raster
+unlink(list.files(dir_layers_pres, pattern = "MS_bathy_5m_lonlat", full.names = TRUE))
 
 ## Future ----
 # Here using the "midterm" A2 scenario. From https://archive.ipcc.ch/ipccreports/sres/emission/index.php?idp=03:
@@ -114,10 +111,10 @@ unlink(rem)
 
 env_future <- try({
   load_layers(layercodes = layercodes_fut$layer_code, 
-                          datadir = dir_layers_fut, 
-                          rasterstack = FALSE)
-  }, 
-  silent = TRUE)
+              datadir = dir_layers_fut, 
+              rasterstack = FALSE)
+}, 
+silent = TRUE)
 env_future$MS_bathy_5m <- abs(env_future$MS_bathy_5m)
 
 tmp <- env_future[[1]]
@@ -144,6 +141,9 @@ for(i in 1:nlyr(env_future)){
 # remove zip files
 rem <- list.files(dir_layers_fut, pattern = ".zip", full.names = TRUE)
 unlink(rem)
+
+# remove extra raster
+unlink(list.files(dir_layers_fut, pattern = "MS_bathy_5m_lonlat", full.names = TRUE))
 
 cat("Done!")
 

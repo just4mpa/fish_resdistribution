@@ -5,12 +5,11 @@ gc()
 
 library(here)
 
-computer = "matrics"
-if(computer == "matrics"){
-  wd <- "/users/boliveira/fish_redistribution"
-} 
-if(computer == "buca"){
+computer = Sys.info()["nodename"]
+if(computer == "BRUNNO-THINKPAD" | computer == "just"){
   wd <- here()
+} else {
+  wd <- "/users/boliveira/fish_redistribution"
 }
 
 source(here(wd,"R/source_code.R"))
@@ -22,11 +21,7 @@ list.of.packages <- c("terra","rnaturalearthdata","biomod2","gbm","maxnet",
                       "ggplot2","data.table",
                       "parallelly","dplyr","foreach","doParallel")
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
+load_packages(list.of.packages)
 
 # Get world shapefile
 globe <- rnaturalearth::ne_coastline(scale = "medium", returnclass = "sv")

@@ -5,51 +5,52 @@ gc()
 
 library(here)
 
-computer = "matrics"
-if(computer == "matrics"){
-  wd <- "/users/boliveira/fish_redistribution"
-} 
-if(computer == "buca"){
+computer = Sys.info()["nodename"]
+if(computer == "BRUNNO-THINKPAD" | computer == "just"){
   wd <- here()
+} else {
+  wd <- "/users/boliveira/fish_redistribution"
 }
 
 source(here(wd,"R/source_code.R"))
 
 list.of.packages <- c("terra","wdpar","here","sf","pbapply", "tidyterra")
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
-
-if(length(new.packages)) install.packages(new.packages)
-
-sapply(list.of.packages, require, character.only = TRUE)
+load_packages(list.of.packages)
 
 # increase timeout to 10 minutes (600 seconds)
 options(timeout = 600)
 
+MPA_dir <- here(dir_data, "WDPA")
+dir.create(MPA_dir, showWarnings = FALSE)
+
 # Download WDPA data ----
-url <- "https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_Dec2025_Public_shp.zip"
-destfile <- file.path(dir_temp, "WDPA_Dec2025_Public.gdb.zip")
-download.file(url, destfile, mode = "wb")
+shp_poly_path <- here(MPA_dir, "WDPA_Dec2025_Public_shp-polygons.shp")
+shp_point_path <- here(MPA_dir, "WDPA_Dec2025_Public_shp-points.shp")
 
-# Unzip file
-zipfile <- list.files(dir_temp, pattern = '.zip',full.names = TRUE)
-lapply(zipfile, function(x){
-  unzip(zipfile = x,
-      exdir = dir_temp)
-})
-
-unlink(zipfile)
+if(!file.exists(shp_poly_path) & !file.exists(shp_point_path)){
+  url <- "https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_Dec2025_Public_shp.zip"
+  destfile <- file.path(MPA_dir, "WDPA_Dec2025_Public.gdb.zip")
+  download.file(url, destfile, mode = "wb")
+  
+  # Unzip file
+  zipfile <- list.files(MPA_dir, pattern = '.zip',full.names = TRUE)
+  lapply(zipfile, function(x){
+    unzip(zipfile = x,
+          exdir = MPA_dir)
+  })
+  
+  unlink(zipfile)
+}
 
 # Get only marine protected areas ----
-gdb_path <- here(dir_temp, "WDPA_Dec2025_Public_shp-polygons.shp")
-MPA_poly <- vect(gdb_path)
+MPA_poly <- vect(shp_poly_path)
 # Filter for marine or coastal areas
 MPA_poly <- MPA_poly %>%
   filter(REALM != "Terrestrial")
 unique(MPA_poly$REALM)
 
-gdb_path <- here(dir_temp, "WDPA_Dec2025_Public_shp-points.shp")
-MPA_point <- vect(gdb_path)
+MPA_point <- vect(shp_point_path)
 # Filter for marine or coastal areas
 MPA_point <- MPA_point %>%
   filter(REALM != "Terrestrial")
@@ -68,7 +69,7 @@ MPA_point_cells <- pblapply(1:nrow(MPA_point), function(x){
   mpa_i <- MPA_point[x,]
   mpa_i_cells <- try({ cells(ocean,mpa_i)[,2] })
   if(class(mpa_i_cells)=="try-error"){
-    mpa_i_cells <- extract(ocean,mpa_i,cell = TRUE)$cell
+    mpa_i_cells <- terra::extract(ocean,mpa_i,cell = TRUE)$cell
   }
   data.frame(MPA = mpa_i$SITE_ID, cell = mpa_i_cells)
 })
@@ -79,6 +80,6 @@ MPA_cells <- unique(MPA_cells)
 head(MPA_cells)
 
 write.csv(MPA_cells,
-          here(dir_data,"MPA_cells.csv"),
+          here::here(dir_data,"MPA_cells.csv"),
           row.names = FALSE)
 
